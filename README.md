@@ -46,7 +46,7 @@
 Для поиска строк, которые присутствуют в JSON файле, но не используются в коде:
 
 ```bash
-node findUnused.js --endFile=path/to/file.json --dirname=path/to/source
+node ./scripts/findUnused.js --endFile=path/to/file.json --dirname=path/to/source
 ```
 
 ### Пример 2: Добавление отсутствующих строк в JSON
@@ -54,7 +54,7 @@ node findUnused.js --endFile=path/to/file.json --dirname=path/to/source
 Для добавления отсутствующих строк в JSON:
 
 ```bash
-node writeMissing.js --endFile=path/to/file.json --dirname=path/to/source
+node ./scripts/writeMissing.js --endFile=path/to/file.json --dirname=path/to/source
 ```
 
 ### Пример 3: Перевод отсутствующих строк и запись в JSON
@@ -62,7 +62,7 @@ node writeMissing.js --endFile=path/to/file.json --dirname=path/to/source
 Для перевода отсутствующих строк с русского на английский и записи в JSON:
 
 ```bash
-node translateMissing.js --endFile=path/to/file.json --dirname=path/to/source
+node ./scripts/translateMissing.js --endFile=path/to/file.json --dirname=path/to/source
 ```
 
 ## Логирование

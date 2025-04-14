@@ -47,12 +47,6 @@ export class LocalFinder {
     // Загружаем ключи из .env файла
     this.apiKey = process.env.SECRET_KEY;
     this.folderId = process.env.FOLDER_ID;
-
-    // Если API-ключ или Folder ID не заданы, выводим ошибку и завершаем выполнение
-    if (!this.apiKey || !this.folderId) {
-      logger.error('API ключ или Folder ID не найден! Убедитесь, что переменные SECRET_KEY и FOLDER_ID установлены в .env файле.');
-      process.exit(1);
-    }
   }
 
   // Метод для поиска всех .ts и .tsx файлов в указанной директории
@@ -161,6 +155,12 @@ export class LocalFinder {
 
   // Метод для перевода отсутствующих строк и записи их в JSON
   async translateMissingStrings(dirName, endFile) {
+    // Если API-ключ или Folder ID не заданы, выводим ошибку и завершаем выполнение
+    if (!this.apiKey || !this.folderId) {
+      logger.error('API ключ или Folder ID не найден! Убедитесь, что переменные SECRET_KEY и FOLDER_ID установлены в .env файле.');
+      process.exit(1);
+    }
+
     // Очищаем состояние
     this._files = [];
     this._strings = [];
@@ -216,6 +216,11 @@ export class LocalFinder {
 
     const indent = 3;
     const missing = this.findMissingStringsInEndFile(endFile);
+
+    if (!missing?.length) {
+      return;
+    }
+
     let json = {};
 
     try {
