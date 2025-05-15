@@ -3,6 +3,7 @@ import path from 'path';
 import winston from 'winston';
 import axios from 'axios';
 import dotenv from 'dotenv';
+import { Project, SyntaxKind } from 'ts-morph';
 
 // Загружаем переменные окружения из .env файла
 dotenv.config();
@@ -42,74 +43,92 @@ export class LocalFinder {
   apiKey;
   folderId;
 
+  // директория с кодом
+  dirname;
+  // проект tw-morph
+  project;
+
   // Конструктор класса
-  constructor() {
+  constructor(dirname) {
     // Загружаем ключи из .env файла
     this.apiKey = process.env.SECRET_KEY;
     this.folderId = process.env.FOLDER_ID;
+
+    this.dirname = dirname;
+    // Создаём проект без tsconfig
+    this.project = new Project({
+      useInMemoryFileSystem: false, // читаем реальные файлы
+    });
+
+    // Добавляем нужные файлы вручную (из папки dirname)
+    this.project.addSourceFilesAtPaths(dirname + '/**/*.{ts,tsx}');
   }
 
-  // Метод для поиска всех .ts и .tsx файлов в указанной директории
-  findTSFiles(dirname) {
-    logger.info(`Начинаю поиск файлов в директории: ${dirname}`);
-    const result = [];
-
-    // Вспомогательная функция для рекурсивного поиска файлов в подкаталогах
-    const searchDirectory = (dir) => {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
-
-        // Если это директория, вызываем рекурсивно для неё
-        if (entry.isDirectory()) {
-          searchDirectory(fullPath);
-        } 
-        // Если это файл с расширением .ts или .tsx, добавляем его в результат
-        else if (
-          entry.isFile() &&
-          (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx'))
-        ) {
-          logger.info(`Найден файл: ${fullPath}`);
-          result.push(fullPath);
-        }
-      }
-    };
-
-    try {
-      // Запуск поиска
-      searchDirectory(dirname);
-      this._files = result;
-      logger.info(`Поиск завершён. Найдено файлов: ${result.length}`);
-    } catch (err) {
-      logger.error(`Ошибка при сканировании: ${err.message}`);
+  removeOuterQuotes(str) {
+    if (
+      typeof str === 'string' &&
+      str.length >= 2 &&
+      ((str.startsWith('"') && str.endsWith('"')) || (str.startsWith("'") && str.endsWith("'")))
+    ) {
+      return str.slice(1, -1);
     }
+    return str;
   }
 
-  // Метод для получения списка найденных файлов
-  getFiles() {
-    return this._files;
+  hasNoCyrillic(text) {
+    return !/[а-яА-ЯёЁ]/.test(text);
   }
 
-  // Метод для извлечения строк, переданных в функцию rk
-  findStringsInRK(fileName) {
-    const code = fs.readFileSync(fileName, 'utf-8');
-    const matches = [...code.matchAll(/rk\s*\(\s*(['"])((?:\\\1|.)*?)\1\s*(?:,.*)?\)/g)];
-    const strings = matches.map(match => match[2]);
-    return strings;
+  // разбирает, всё что внутри rk на объект со свойствами
+  // string - локализуемая строка
+  parseRkArgs(args) {
+    const text = this.removeOuterQuotes(args[0]);
+    const parsedString = {
+      string: text, // просто текст, чтобы пихнуть в переводчик
+      langFileKey: text, // ключ в файле локализации
+    }
+
+    if (args.length === 4 && args[3] === 'true') {
+      logger.info(`Использование параметров "${args.join(", ")}" определено как template`);
+      parsedString.langFileKey = 'template#' + text;
+      return parsedString;
+    }
+
+    if (args.length > 1 && this.hasNoCyrillic(args[1])) {
+      logger.info(`Использование параметров "${args.join(", ")}" определено как plural`);
+      parsedString.langFileKey = 'plural#' + text;
+      return parsedString;
+    }
+
+    if (args.length === 2) {
+      logger.info(`Использование параметров "${args.join(", ")}" определено как использование с контекстом`);
+      const context = this.removeOuterQuotes(args[0]);
+      const text = this.removeOuterQuotes(args[1]);
+      parsedString.langFileKey = text + '@@' + context;
+      parsedString.string = text;
+      return parsedString;
+    }
+
+    logger.info(`Использование параметров "${args.join(", ")}" определено как стандартное использование`);
+    return parsedString;
   }
 
   // Метод для поиска всех строк rk во всех найденных файлах
   findStringsInAllFiles() {
     const allStrings = [];
 
-    // Проходим по всем файлам и находим строки в каждом
-    for (const file of this._files) {
-      try {
-        const strings = this.findStringsInRK(file);
-        allStrings.push(...strings);
-      } catch (err) {
-        logger.error(`Ошибка при обработке файла ${file}: ${err.message}`);
+    // Обрабатываем каждый файл
+    for (const sourceFile of this.project.getSourceFiles()) {
+      const calls = sourceFile.getDescendantsOfKind(SyntaxKind.CallExpression);
+
+      for (const call of calls) {
+        const expression = call.getExpression();
+
+        if (expression.getText() === "rk") {
+          const args = call.getArguments().map(arg => arg.getText());
+          allStrings.push(this.parseRkArgs(args));
+          logger.info(`Найден вызов rk в файле: "${sourceFile.getFilePath()}" с параметрами ${args.join(", ")}`);
+        }
       }
     }
 
@@ -140,13 +159,10 @@ export class LocalFinder {
     const jsonKeys = Object.keys(json);
 
     // Находим строки, которые отсутствуют в JSON
-    const missingStrings = this._strings.filter(str => !jsonKeys.includes(str));
+    const missingStrings = this._strings.filter(str => !jsonKeys.includes(str.langFileKey));
 
     // Выводим информацию о найденных строках
-    if (missingStrings.length > 0) {
-      logger.info(`Не найдено среди ключей JSON "${endFile}":`);
-      missingStrings.forEach(str => logger.info(`- ${str}`));
-    } else {
+    if (missingStrings.length <= 0) {
       logger.info(`Все строки найдены среди ключей JSON-файла "${endFile}".`);
     }
 
@@ -166,7 +182,6 @@ export class LocalFinder {
     this._strings = [];
 
     // Сначала ищем файлы и строки
-    this.findTSFiles(dirName);
     this.findStringsInAllFiles();
 
     const indent = 3;
@@ -211,7 +226,6 @@ export class LocalFinder {
     this._strings = [];
 
     // Сначала ищем файлы и строки
-    this.findTSFiles(dirName);
     this.findStringsInAllFiles();
 
     const indent = 3;
@@ -231,15 +245,17 @@ export class LocalFinder {
     }
 
     // Добавляем отсутствующие строки с пустыми значениями
-    missing.forEach(str => {
-      if (!(str in json)) {
-        json[str] = "";
+    logger.info(`Дабавление в JSON строк "${endFile}":`);
+    missing.forEach(({ langFileKey }) => {
+      if (!(langFileKey in json)) {
+        logger.info(`- ${langFileKey}`);
+        json[langFileKey] = "";
       }
     });
 
     try {
       // Записываем обновлённый JSON обратно в файл
-      fs.writeFileSync(endFile, JSON.stringify(json, null, indent), 'utf-8');
+      fs.writeFileSync(endFile, JSON.stringify(json, null, indent) + '\n', 'utf-8');
       logger.info(`Файл ${endFile} обновлён с пустыми значениями для отсутствующих строк.`);
     } catch (err) {
       logger.error(`Ошибка при записи в файл ${endFile}: ${err.message}`);
@@ -279,7 +295,6 @@ export class LocalFinder {
     this._strings = [];
 
     // Сначала ищем файлы и строки
-    this.findTSFiles(dirName);
     this.findStringsInAllFiles();
 
     logger.info(`Читаем JSON из файла: ${endFile}`);

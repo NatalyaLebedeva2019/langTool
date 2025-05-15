@@ -24,7 +24,7 @@ const argv = yargs(hideBin(process.argv))
   .argv;
 
 (async () => {
-  const finder = new LocalFinder();
+  const finder = new LocalFinder(argv.dirname);
   await finder.writeMissingStringsAsEmpty(argv.dirname, argv.endFile);
 
   console.log(`\nПустые значения для отсутствующих строк были записаны в файл ${argv.endFile}`);
